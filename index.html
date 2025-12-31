@@ -1,24 +1,33 @@
-
 <!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <!-- thêm user-scalable=no để tránh zoom tự động trên điện thoại -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Tra Từ Nhanh Jrai-Việt</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #fef7ed 0%, #fff7ed 100%);
+            background: #fdfaf6;
             min-height: 100vh;
-            /* ngăn chặn việc chạm giữ hiện menu context không cần thiết trên di động */
+            margin: 0;
             -webkit-touch-callout: none;
         }
-        /* đảm bảo font size input >= 16px để iOS không tự zoom */
+        /* Ngăn chặn zoom tự động gây hỏng layout trên iOS */
         input, select, textarea {
             font-size: 16px !important;
+        }
+        /* Custom scrollbar cho đẹp */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #ed8936;
+            border-radius: 10px;
         }
     </style>
 <script type="importmap">
@@ -34,5 +43,7 @@
 </head>
 <body>
     <div id="root"></div>
+    <!-- Thêm thẻ script này để Vercel có thể chạy được ứng dụng -->
+    <script type="module" src="./index.tsx"></script>
 </body>
 </html>

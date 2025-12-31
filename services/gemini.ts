@@ -1,10 +1,17 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
-// Khởi tạo SDK bên trong hàm để tránh lỗi ReferenceError: process is not defined khi load script trên một số môi trường
+/**
+ * Hàm khởi tạo AI an toàn cho môi trường Browser.
+ * Tránh lỗi "process is not defined" thường gặp khi deploy lên Vercel.
+ */
 const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
+  // Kiểm tra an toàn biến môi trường
+  const env = typeof process !== 'undefined' ? process.env : (window as any).process?.env;
+  const apiKey = env?.API_KEY;
+  
   if (!apiKey) {
-    throw new Error("API Key không tồn tại. Vui lòng cấu hình environment variable.");
+    console.error("API_KEY is missing in environment variables.");
+    return null;
   }
   return new GoogleGenAI({ apiKey });
 };
@@ -12,9 +19,11 @@ const getAiClient = () => {
 export const getSpeech = async (text: string, isVietnamese: boolean = false): Promise<string | null> => {
   try {
     const ai = getAiClient();
+    if (!ai) return null;
+
     const prompt = isVietnamese 
-      ? `Phát âm tiếng Việt rõ ràng, tốc độ vừa phải: "${text}"` 
-      : `Phát âm tiếng dân tộc Jrai rõ ràng, chuẩn xác: "${text}"`;
+      ? `Phát âm tiếng Việt rõ ràng: "${text}"` 
+      : `Phát âm tiếng Jrai rõ ràng: "${text}"`;
       
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
@@ -23,7 +32,6 @@ export const getSpeech = async (text: string, isVietnamese: boolean = false): Pr
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            // Puck cho tiếng Việt, Kore cho tiếng dân tộc để có âm sắc phù hợp
             prebuiltVoiceConfig: { voiceName: isVietnamese ? 'Puck' : 'Kore' },
           },
         },
@@ -33,7 +41,7 @@ export const getSpeech = async (text: string, isVietnamese: boolean = false): Pr
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     return base64Audio || null;
   } catch (error) {
-    console.error("Lỗi tạo âm thanh:", error);
+    console.error("Lỗi Gemini TTS:", error);
     return null;
   }
 };
