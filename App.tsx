@@ -1,22 +1,20 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Dictionary, TabType, WordEntry } from './types';
 import { DEFAULT_DICTIONARY, DiscordIcon, SpeakerIcon } from './constants';
-import { explainWord, getSpeech } from './services/gemini';
+import { getSpeech } from './services/gemini';
 
-// Helper giải mã Base64 sang Uint8Array (thủ công theo guideline)
-function decodeBase64ToBytes(base64: string) {
+// Giải mã Base64 thủ công theo quy định SDK
+function decodeBase64(base64: string) {
   const binaryString = window.atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
 }
 
-// Helper giải mã PCM sang AudioBuffer
-async function decodePcmToBuffer(data: Uint8Array, ctx: AudioContext): Promise<AudioBuffer> {
+// Chuyển PCM sang AudioBuffer
+async function pcmToBuffer(data: Uint8Array, ctx: AudioContext): Promise<AudioBuffer> {
   const dataInt16 = new Int16Array(data.buffer);
   const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
   const channelData = buffer.getChannelData(0);
@@ -33,7 +31,7 @@ interface QuizItem extends WordEntry {
   isTesting: boolean;
 }
 
-const WordCard: React.FC<{ entry: WordEntry; onExplain?: () => void }> = ({ entry, onExplain }) => {
+const WordCard: React.FC<{ entry: WordEntry }> = ({ entry }) => {
   const [playing, setPlaying] = useState(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
@@ -48,54 +46,49 @@ const WordCard: React.FC<{ entry: WordEntry; onExplain?: () => void }> = ({ entr
       if (ctx.state === 'suspended') await ctx.resume();
 
       const base64 = await getSpeech(text, isViet);
-      if (!base64) throw new Error("No audio data");
+      if (!base64) {
+        setPlaying(false);
+        return;
+      }
 
-      const bytes = decodeBase64ToBytes(base64);
-      const buffer = await decodePcmToBuffer(bytes, ctx);
+      const bytes = decodeBase64(base64);
+      const buffer = await pcmToBuffer(bytes, ctx);
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(ctx.destination);
       source.onended = () => setPlaying(false);
       source.start(0);
     } catch (err) {
-      console.error(err);
+      console.error("Audio Play Error:", err);
       setPlaying(false);
     }
   };
 
   return (
-    <div className="bg-white rounded-xl p-4 md:p-5 mb-3 shadow-sm border-l-4 border-orange-600 hover:shadow-md transition-all">
-      <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+    <div className="bg-white rounded-xl p-4 md:p-5 mb-3 shadow-sm border-l-4 border-orange-600 hover:shadow-md transition-all group">
+      <div className="flex justify-between items-center">
         <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-3 mb-1">
             <h3 className="text-lg md:text-xl font-bold text-orange-900">{entry.jrai}</h3>
             <button 
               onClick={() => handlePlay(entry.jrai, false)}
-              className={`p-1.5 rounded-full hover:bg-orange-100 transition-colors ${playing ? 'text-orange-300' : 'text-orange-600'}`}
-              title="Nghe tiếng Jrai"
+              className={`p-2 rounded-full hover:bg-orange-100 transition-colors ${playing ? 'text-orange-300' : 'text-orange-600'}`}
+              title="Nghe Jrai"
             >
               <SpeakerIcon />
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <p className="text-gray-600 font-medium text-sm md:text-base">{entry.viet}</p>
             <button 
               onClick={() => handlePlay(entry.viet, true)}
               className={`p-1.5 rounded-full hover:bg-orange-50 transition-colors ${playing ? 'text-gray-300' : 'text-gray-400'}`}
-              title="Nghe tiếng Việt"
+              title="Nghe Việt"
             >
               <SpeakerIcon />
             </button>
           </div>
         </div>
-        {onExplain && (
-          <button 
-            onClick={onExplain}
-            className="w-full sm:w-auto text-[10px] md:text-xs bg-orange-100 text-orange-700 px-3 py-1.5 rounded-lg font-bold hover:bg-orange-200 transition-colors uppercase tracking-wider"
-          >
-            💡 Giải thích AI
-          </button>
-        )}
       </div>
     </div>
   );
@@ -106,8 +99,6 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>(TabType.SEARCH);
   const [searchQuery, setSearchQuery] = useState('');
   const [quizWords, setQuizWords] = useState<QuizItem[]>([]);
-  const [aiExplanation, setAiExplanation] = useState<string | null>(null);
-  const [loadingAi, setLoadingAi] = useState(false);
   const [securityKey, setSecurityKey] = useState('');
 
   const normalize = (str: string) => {
@@ -115,14 +106,14 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const saved = localStorage.getItem('jrai_dict_v1.5');
+    const saved = localStorage.getItem('jrai_dict_v1.6');
     if (saved) {
-      try { setDictionary(JSON.parse(saved)); } catch (e) { console.error("Data error"); }
+      try { setDictionary(JSON.parse(saved)); } catch (e) { console.error("Restore data failed"); }
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('jrai_dict_v1.5', JSON.stringify(dictionary));
+    localStorage.setItem('jrai_dict_v1.6', JSON.stringify(dictionary));
   }, [dictionary]);
 
   const refreshQuiz = useCallback(() => {
@@ -142,303 +133,244 @@ const App: React.FC = () => {
     if (activeTab === TabType.LEARN) refreshQuiz();
   }, [activeTab, refreshQuiz]);
 
-  const startTesting = () => {
-    setQuizWords(prev => prev.map(item => ({
-      ...item,
-      isTesting: true,
-      questionSide: Math.random() > 0.5 ? 'jrai' : 'viet',
-      status: 'none',
-      userInput: ''
-    })));
-  };
-
-  const handleCheckAll = () => {
-    setQuizWords(prev => prev.map(item => {
-      if (!item.isTesting) return item;
-      const target = item.questionSide === 'jrai' ? item.viet : item.jrai;
-      const isCorrect = normalize(item.userInput) === normalize(target);
-      return { ...item, status: isCorrect ? 'correct' : 'wrong' };
-    }));
-  };
-
-  // Fix: Explicitly type filteredResults and cast Object.values to WordEntry[] to resolve 'unknown' property errors.
   const filteredResults: WordEntry[] = searchQuery.trim() 
-    ? (Object.values(dictionary) as WordEntry[]).filter((w: WordEntry) => normalize(w.jrai) === normalize(searchQuery) || normalize(w.viet) === normalize(searchQuery))
+    ? (Object.values(dictionary) as WordEntry[]).filter((w: WordEntry) => 
+        normalize(w.jrai).includes(normalize(searchQuery)) || 
+        normalize(w.viet).includes(normalize(searchQuery))
+      )
     : [];
 
-  const handleExplain = async (word: WordEntry) => {
-    setLoadingAi(true);
-    setAiExplanation(null);
-    const text = await explainWord(word.jrai, word.viet);
-    setAiExplanation(`**${word.jrai}**: ${text}`);
-    setLoadingAi(false);
-  };
-
   return (
-    <div className="max-w-6xl mx-auto px-4 py-4 md:py-8 pb-32">
-      {/* Header Compact for Mobile */}
-      <header className="bg-gradient-to-br from-orange-800 to-orange-600 text-white p-6 md:p-10 rounded-2xl md:rounded-3xl shadow-xl text-center mb-6">
-        <h1 className="text-2xl md:text-4xl font-black tracking-tight uppercase">Jrai - Việt</h1>
-        <p className="text-xs md:text-sm mt-1 text-orange-100 opacity-90 font-medium">Tra từ nhanh & Học tập hiệu quả</p>
-      </header>
+    <div className="min-h-screen bg-[#fdfaf6] selection:bg-orange-200">
+      <div className="max-w-5xl mx-auto px-4 py-6 md:py-10 pb-36">
+        {/* Header - Compact on mobile, spacious on desktop */}
+        <header className="bg-gradient-to-br from-orange-700 to-orange-500 text-white p-6 md:p-12 rounded-[2rem] shadow-2xl text-center mb-8 md:mb-12 relative overflow-hidden">
+          <div className="relative z-10">
+            <h1 className="text-3xl md:text-5xl font-black tracking-tight uppercase mb-2">Jrai - Việt</h1>
+            <p className="text-xs md:text-sm text-orange-100 font-bold uppercase tracking-widest opacity-90">Từ điển & Học tập bỏ túi</p>
+          </div>
+          <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+        </header>
 
-      {/* Stats Section */}
-      <div className="flex items-center justify-center gap-4 mb-6 md:mb-10">
-        <div className="bg-white border border-orange-100 px-6 py-2 rounded-full shadow-sm flex items-center gap-3">
-          <span className="text-2xl font-black text-orange-600 tracking-tighter">{Object.keys(dictionary).length}</span>
-          <span className="text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Từ vựng</span>
-        </div>
-      </div>
+        {/* Navigation Tabs - Full width for desktop, scrollable for mobile */}
+        <nav className="flex bg-white p-1.5 rounded-2xl shadow-lg mb-8 md:mb-12 border border-orange-50 sticky top-4 z-40 backdrop-blur-md bg-white/90">
+          {(Object.values(TabType) as TabType[]).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 min-w-[70px] py-3 md:py-4 px-2 rounded-xl font-black transition-all text-[10px] md:text-xs uppercase tracking-tighter md:tracking-widest ${
+                activeTab === tab ? 'bg-orange-600 text-white shadow-md' : 'text-gray-400 hover:text-orange-600 hover:bg-orange-50'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </nav>
 
-      {/* Responsive Tabs */}
-      <nav className="flex bg-white p-1 rounded-xl md:rounded-2xl shadow-sm mb-6 md:mb-10 overflow-x-auto no-scrollbar border border-gray-100">
-        {(Object.values(TabType) as TabType[]).map(tab => (
-          <button
-            key={tab}
-            onClick={() => { setActiveTab(tab); setAiExplanation(null); }}
-            className={`flex-1 min-w-[80px] py-2.5 md:py-4 px-2 rounded-lg md:rounded-xl font-black transition-all text-[10px] md:text-xs uppercase tracking-tighter md:tracking-widest ${
-              activeTab === tab ? 'bg-orange-600 text-white shadow-lg scale-[1.02]' : 'text-gray-400 hover:bg-orange-50'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </nav>
-
-      {/* Main Content Area - Wide for Desktop */}
-      <main className="min-h-[400px]">
-        {activeTab === TabType.SEARCH && (
-          <div className="animate-in fade-in duration-500 grid grid-cols-1 lg:grid-cols-12 gap-8">
-            <div className="lg:col-span-8">
-              <div className="sticky top-4 z-10 bg-orange-50/80 backdrop-blur-md p-2 rounded-2xl mb-6 border border-orange-100">
+        {/* Content Area */}
+        <main className="animate-in fade-in duration-500">
+          {activeTab === TabType.SEARCH && (
+            <div className="max-w-3xl mx-auto">
+              <div className="relative mb-10 group">
                 <input 
                   type="text" 
-                  placeholder="Nhập từ Jrai hoặc tiếng Việt..."
-                  className="w-full p-4 md:p-5 rounded-xl border-none focus:ring-2 focus:ring-orange-500 outline-none transition-all shadow-inner bg-white font-bold text-gray-800"
+                  placeholder="Tìm kiếm từ vựng..."
+                  className="w-full p-5 md:p-6 rounded-2xl border-none ring-4 ring-orange-100 focus:ring-orange-500 outline-none transition-all shadow-xl bg-white font-bold text-gray-800 text-lg md:text-xl placeholder:text-gray-300"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
+                <div className="absolute right-6 top-1/2 -translate-y-1/2 text-orange-200 group-focus-within:text-orange-500 transition-colors">
+                  <svg className="w-6 h-6 md:w-8 md:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </div>
               </div>
 
               <div className="space-y-4">
-                {searchQuery.trim() && filteredResults.length === 0 ? (
-                  <div className="bg-white p-10 rounded-2xl border-2 border-dashed border-orange-200 text-center">
-                    <p className="text-orange-800 font-bold mb-2">Không tìm thấy từ này</p>
-                    <p className="text-xs text-gray-400">Hãy kiểm tra lại chính tả hoặc thêm từ mới ở tab Quản Lý.</p>
-                  </div>
+                {searchQuery.trim() ? (
+                  filteredResults.length > 0 ? (
+                    filteredResults.map((w, i) => <WordCard key={i} entry={w} />)
+                  ) : (
+                    <div className="bg-white p-12 rounded-3xl border-2 border-dashed border-orange-200 text-center">
+                      <p className="text-orange-800 font-black text-lg">Hệ thống chưa có từ này</p>
+                      <p className="text-sm text-gray-400 mt-2 font-medium italic">Bạn có thể tự thêm từ mới ở tab Quản Lý.</p>
+                    </div>
+                  )
                 ) : (
-                  filteredResults.map((w, i) => <WordCard key={i} entry={w} onExplain={() => handleExplain(w)} />)
-                )}
-                {!searchQuery.trim() && (
-                  <div className="text-center py-20 text-gray-300">
-                    <div className="text-5xl mb-4">🔍</div>
-                    <p className="italic font-medium text-sm">Bắt đầu tra cứu bằng cách nhập từ vào ô phía trên.</p>
+                  <div className="text-center py-24">
+                    <div className="text-6xl md:text-8xl mb-6 grayscale opacity-20">📖</div>
+                    <p className="text-gray-300 font-black uppercase tracking-widest text-sm">Nhập từ vựng để bắt đầu</p>
                   </div>
                 )}
               </div>
             </div>
+          )}
 
-            {/* Side Explanations for Desktop */}
-            <div className="lg:col-span-4 space-y-6">
-              {(aiExplanation || loadingAi) && (
-                <div className="bg-orange-600 text-white p-6 rounded-3xl shadow-xl animate-in slide-in-from-right-4 duration-300">
-                  <h3 className="font-black text-xs uppercase tracking-widest mb-4 flex items-center gap-2">
-                    <span className="bg-white/20 p-1.5 rounded-lg text-lg">✨</span> Trí tuệ nhân tạo
-                  </h3>
-                  {loadingAi ? (
-                    <div className="flex flex-col items-center py-10 gap-3">
-                      <div className="w-8 h-8 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      <p className="text-[10px] font-bold uppercase animate-pulse">Đang phân tích dữ liệu...</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <p className="text-sm leading-relaxed font-medium whitespace-pre-wrap">{aiExplanation}</p>
-                      <button onClick={() => setAiExplanation(null)} className="w-full py-2 bg-black/10 hover:bg-black/20 rounded-xl text-[10px] font-black uppercase transition-colors">Đóng giải thích</button>
-                    </div>
-                  )}
+          {activeTab === TabType.LEARN && (
+            <div className="space-y-8">
+              <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-orange-600 p-6 rounded-3xl shadow-xl text-white">
+                <div>
+                  <h2 className="text-lg md:text-xl font-black uppercase">Thử thách ghi nhớ</h2>
+                  <p className="text-[10px] md:text-xs font-bold opacity-80 uppercase tracking-widest">Học ngẫu nhiên 6 từ vựng</p>
                 </div>
-              )}
-              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                <h4 className="font-black text-[10px] text-gray-400 uppercase tracking-widest mb-4">Mẹo tra cứu</h4>
-                <ul className="text-xs text-gray-500 space-y-3 font-medium">
-                  <li className="flex gap-2"><span>•</span> Nhập từ tiếng Việt hoặc tiếng Jrai hệ thống đều hiểu.</li>
-                  <li className="flex gap-2"><span>•</span> Nhấn vào icon loa để nghe phát âm bản địa chuẩn xác.</li>
-                  <li className="flex gap-2"><span>•</span> Dùng AI để hiểu sâu hơn về ngữ cảnh sử dụng từ.</li>
-                </ul>
+                <div className="flex gap-2 w-full md:w-auto">
+                  <button onClick={() => setQuizWords(prev => prev.map(it => ({...it, isTesting: true, questionSide: Math.random() > 0.5 ? 'jrai' : 'viet', status: 'none', userInput: ''})))} className="flex-1 md:flex-none bg-white text-orange-600 px-6 py-3 rounded-xl font-black text-[10px] uppercase hover:scale-105 transition-all">Kiểm tra</button>
+                  <button onClick={() => setQuizWords(prev => prev.map(it => { const target = it.questionSide === 'jrai' ? it.viet : it.jrai; return {...it, status: normalize(it.userInput) === normalize(target) ? 'correct' : 'wrong'}; }))} className="flex-1 md:flex-none bg-orange-800 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase hover:scale-105 transition-all">Nộp bài</button>
+                  <button onClick={refreshQuiz} className="flex-1 md:flex-none bg-black/20 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase hover:bg-black/30 transition-all">Đổi từ</button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {quizWords.map((item, i) => (
+                  <div key={i} className="bg-white rounded-[2rem] p-8 shadow-lg border-b-8 border-orange-200 flex flex-col items-center justify-center min-h-[220px] transition-transform hover:-translate-y-2">
+                    {!item.isTesting ? (
+                      <div className="text-center">
+                        <span className="text-[10px] font-black text-gray-300 uppercase mb-4 block tracking-widest">Từ số {i+1}</span>
+                        <h3 className="text-3xl font-black text-orange-900 mb-2">{item.jrai}</h3>
+                        <div className="h-1.5 w-12 bg-orange-100 mx-auto mb-4 rounded-full"></div>
+                        <p className="text-gray-500 font-bold text-lg uppercase tracking-tight">{item.viet}</p>
+                      </div>
+                    ) : (
+                      <div className="w-full space-y-5">
+                        <div className="flex justify-between items-center text-[10px] font-black uppercase text-gray-300">
+                          <span>Câu {i+1}</span>
+                          <span className="text-orange-400 italic">Dịch {item.questionSide === 'jrai' ? 'Việt' : 'Jrai'}</span>
+                        </div>
+                        <div className="text-2xl font-black text-center text-orange-900 uppercase">
+                          {item.questionSide === 'jrai' ? item.jrai : item.viet}
+                        </div>
+                        <input 
+                          type="text"
+                          className={`w-full p-4 border-2 rounded-2xl outline-none transition-all font-bold text-center ${
+                            item.status === 'correct' ? 'border-green-500 bg-green-50 text-green-700' : 
+                            item.status === 'wrong' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-100 focus:border-orange-500 bg-gray-50'
+                          }`}
+                          placeholder="Trả lời..."
+                          value={item.userInput}
+                          onChange={(e) => { const n = [...quizWords]; n[i].userInput = e.target.value; n[i].status = 'none'; setQuizWords(n); }}
+                        />
+                        {item.status === 'wrong' && <p className="text-[10px] text-red-400 font-bold text-center uppercase">Đúng là: {item.questionSide === 'jrai' ? item.viet : item.jrai}</p>}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {activeTab === TabType.LEARN && (
-          <div className="animate-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-              <h2 className="text-sm md:text-lg font-black text-gray-800 uppercase tracking-tight">Học & Kiểm tra ngẫu nhiên</h2>
-              <div className="flex gap-2 w-full md:w-auto">
-                <button onClick={startTesting} className="flex-1 md:flex-none bg-orange-100 text-orange-800 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-200 transition-all">Bắt đầu thi</button>
-                <button onClick={handleCheckAll} className="flex-1 md:flex-none bg-green-600 text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-green-700 transition-all shadow-md">Nộp bài</button>
-                <button onClick={refreshQuiz} className="flex-1 md:flex-none bg-gray-800 text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-black transition-all">Đổi từ mới</button>
+          {activeTab === TabType.MANAGE && (
+            <div className="max-w-xl mx-auto py-6">
+              <div className="bg-white p-8 md:p-12 rounded-[3rem] shadow-xl border border-orange-50">
+                 <h2 className="text-2xl font-black text-gray-800 mb-10 uppercase text-center tracking-tight">Thêm từ vựng mới</h2>
+                 <div className="space-y-8">
+                   <div className="relative">
+                     <label className="text-[10px] font-black text-gray-400 uppercase ml-4 mb-2 block">Từ tiếng Jrai</label>
+                     <input id="new-jrai" type="text" className="w-full p-5 rounded-2xl bg-gray-50 border-none ring-2 ring-transparent focus:ring-orange-500 outline-none transition-all font-bold text-lg" />
+                   </div>
+                   <div className="relative">
+                     <label className="text-[10px] font-black text-gray-400 uppercase ml-4 mb-2 block">Nghĩa tiếng Việt</label>
+                     <input id="new-viet" type="text" className="w-full p-5 rounded-2xl bg-gray-50 border-none ring-2 ring-transparent focus:ring-orange-500 outline-none transition-all font-bold text-lg" />
+                   </div>
+                   <button 
+                     onClick={() => {
+                       const j = (document.getElementById('new-jrai') as HTMLInputElement).value;
+                       const v = (document.getElementById('new-viet') as HTMLInputElement).value;
+                       if (j && v) {
+                         setDictionary(prev => ({...prev, [normalize(j)]: {jrai: j, viet: v}}));
+                         (document.getElementById('new-jrai') as HTMLInputElement).value = '';
+                         (document.getElementById('new-viet') as HTMLInputElement).value = '';
+                         alert("Lưu thành công!");
+                       }
+                     }}
+                     className="w-full bg-orange-600 text-white py-6 rounded-2xl font-black hover:bg-orange-700 shadow-2xl transition-all uppercase tracking-widest text-sm active:scale-95"
+                   >
+                     Cập nhật kho từ
+                   </button>
+                 </div>
               </div>
             </div>
+          )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {quizWords.map((item, i) => (
-                <div key={i} className="bg-white rounded-2xl p-6 shadow-sm border-b-4 border-orange-400 hover:-translate-y-1 transition-all min-h-[160px] flex flex-col justify-center">
-                  {!item.isTesting ? (
-                    <div className="text-center">
-                      <span className="text-[9px] font-black text-gray-300 uppercase tracking-[0.2em] mb-2 block">Thẻ số {i+1}</span>
-                      <h3 className="text-2xl font-black text-orange-900">{item.jrai}</h3>
-                      <div className="w-8 h-1 bg-orange-100 mx-auto my-3"></div>
-                      <p className="text-gray-600 font-bold text-sm uppercase">{item.viet}</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center border-b border-gray-50 pb-2">
-                        <span className="text-[9px] font-black text-orange-300 uppercase">Câu hỏi {i+1}</span>
-                        <span className="text-[9px] font-bold text-gray-400 italic">Dịch sang {item.questionSide === 'jrai' ? 'Tiếng Việt' : 'Tiếng Jrai'}</span>
-                      </div>
-                      <div className="text-xl font-black text-center text-orange-900 uppercase">
-                        {item.questionSide === 'jrai' ? item.jrai : item.viet}
-                      </div>
-                      <input 
-                        type="text"
-                        className={`w-full p-3 border-2 rounded-xl outline-none transition-all font-bold text-sm text-center ${
-                          item.status === 'correct' ? 'border-green-500 bg-green-50 text-green-700' : 
-                          item.status === 'wrong' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-100 focus:border-orange-500 bg-gray-50'
-                        }`}
-                        placeholder="..."
-                        value={item.userInput}
-                        onChange={(e) => {
-                          const next = [...quizWords];
-                          next[i].userInput = e.target.value;
-                          next[i].status = 'none';
-                          setQuizWords(next);
-                        }}
-                      />
-                      {item.status === 'wrong' && <p className="text-[9px] text-red-400 font-bold text-center italic uppercase">Đúng là: {item.questionSide === 'jrai' ? item.viet : item.jrai}</p>}
-                    </div>
-                  )}
+          {activeTab === TabType.DATA && (
+            <div className="py-6 space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="bg-white p-8 md:p-10 rounded-[2.5rem] shadow-lg border border-gray-100">
+                  <h3 className="font-black text-orange-800 uppercase text-sm mb-6 flex items-center gap-2"><span>📥</span> Xuất dữ liệu</h3>
+                  <div className="mb-6">
+                    <label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Mã bảo mật Admin</label>
+                    <input 
+                      type="password"
+                      placeholder="Mã số xuất file..."
+                      className="w-full p-4 border-2 border-gray-50 rounded-2xl text-sm outline-none focus:border-orange-500 font-bold"
+                      value={securityKey}
+                      onChange={(e) => setSecurityKey(e.target.value)}
+                    />
+                  </div>
+                  <button 
+                    onClick={() => {
+                      if (securityKey !== 'JRAI2025') { alert("Mã không đúng."); return; }
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dictionary));
+                      const link = document.createElement('a');
+                      link.href = dataStr;
+                      link.download = "jrai_dict_v1.json";
+                      link.click();
+                    }}
+                    className="w-full py-5 bg-orange-100 text-orange-800 rounded-2xl font-black hover:bg-orange-200 transition-colors uppercase text-[10px] tracking-widest"
+                  >
+                    Tải về file JSON
+                  </button>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* Tab Manage and Data kept consistent but with wider layout */}
-        {activeTab === TabType.MANAGE && (
-          <div className="max-w-xl mx-auto animate-in fade-in py-10">
-            <div className="bg-white p-8 md:p-12 rounded-[2rem] shadow-sm border border-gray-100">
-               <h2 className="text-xl font-black text-gray-800 mb-8 uppercase text-center">Bổ sung kho từ vựng</h2>
-               <div className="space-y-6">
-                 <div>
-                   <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 ml-2">Từ tiếng Jrai</label>
-                   <input id="new-jrai" type="text" className="w-full p-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-orange-500 focus:bg-white outline-none transition-all font-bold" />
-                 </div>
-                 <div>
-                   <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 ml-2">Nghĩa tiếng Việt</label>
-                   <input id="new-viet" type="text" className="w-full p-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-orange-500 focus:bg-white outline-none transition-all font-bold" />
-                 </div>
-                 <button 
-                   onClick={() => {
-                     const j = (document.getElementById('new-jrai') as HTMLInputElement).value;
-                     const v = (document.getElementById('new-viet') as HTMLInputElement).value;
-                     if (j && v) {
-                       setDictionary(prev => ({...prev, [normalize(j)]: {jrai: j, viet: v}}));
-                       (document.getElementById('new-jrai') as HTMLInputElement).value = '';
-                       (document.getElementById('new-viet') as HTMLInputElement).value = '';
-                       alert("Đã thêm thành công!");
-                     }
-                   }}
-                   className="w-full bg-orange-600 text-white py-5 rounded-2xl font-black hover:bg-orange-700 shadow-xl transition-all uppercase tracking-widest text-sm"
-                 >
-                   Lưu vào từ điển
-                 </button>
-               </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === TabType.DATA && (
-          <div className="animate-in fade-in py-10 space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
-                <h3 className="font-black text-orange-800 uppercase text-sm mb-6">Xuất dữ liệu hệ thống</h3>
-                <div className="mb-6">
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">Mã bảo mật Admin</label>
+                <div className="bg-white p-8 md:p-10 rounded-[2.5rem] shadow-lg border border-gray-100 flex flex-col justify-between">
+                  <div>
+                    <h3 className="font-black text-orange-800 uppercase text-sm mb-4 flex items-center gap-2"><span>📤</span> Nhập dữ liệu</h3>
+                    <p className="text-[10px] text-gray-400 font-bold mb-6 uppercase tracking-wider opacity-60">Dùng file đã lưu để khôi phục nhanh.</p>
+                  </div>
                   <input 
-                    type="password"
-                    placeholder="Mã số xuất file..."
-                    className="w-full p-4 border-2 border-gray-50 rounded-2xl text-sm outline-none focus:border-orange-500 font-bold"
-                    value={securityKey}
-                    onChange={(e) => setSecurityKey(e.target.value)}
+                    type="file" 
+                    accept=".json"
+                    className="w-full text-xs text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-orange-50 file:text-orange-800 hover:file:bg-orange-100 cursor-pointer"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          try {
+                            const json = JSON.parse(ev.target?.result as string);
+                            setDictionary(json);
+                            alert("Đồng bộ hoàn tất!");
+                          } catch (err) { alert("File không hợp lệ."); }
+                        };
+                        reader.readAsText(file);
+                      }
+                    }}
                   />
                 </div>
+              </div>
+
+              <div className="bg-red-50 p-10 rounded-[2.5rem] border-2 border-red-100 text-center">
+                <h3 className="font-black text-red-800 uppercase text-xs mb-3">Xóa toàn bộ dữ liệu</h3>
+                <p className="text-[10px] text-red-600/70 mb-8 font-black uppercase tracking-widest italic">Mọi từ bạn tự thêm sẽ biến mất vĩnh viễn.</p>
                 <button 
-                  onClick={() => {
-                    if (securityKey !== 'JRAI2025') { alert("Mã không đúng."); return; }
-                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dictionary));
-                    const link = document.createElement('a');
-                    link.href = dataStr;
-                    link.download = "jrai_dict_backup.json";
-                    link.click();
-                  }}
-                  className="w-full py-4 bg-orange-100 text-orange-800 rounded-2xl font-black hover:bg-orange-200 transition-colors uppercase text-[10px] tracking-widest"
+                  onClick={() => { if (confirm("Khôi phục cài đặt gốc?")) setDictionary(DEFAULT_DICTIONARY); }}
+                  className="bg-red-600 text-white px-12 py-5 rounded-2xl font-black hover:bg-red-700 shadow-xl active:scale-95 transition-all text-[10px] uppercase tracking-[0.2em]"
                 >
-                  Tải file JSON
+                  Reset Toàn Bộ
                 </button>
               </div>
-
-              <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between">
-                <div>
-                  <h3 className="font-black text-orange-800 uppercase text-sm mb-4">Đồng bộ từ File</h3>
-                  <p className="text-[10px] text-gray-400 font-medium mb-6">Sử dụng file JSON lưu trữ để khôi phục nhanh.</p>
-                </div>
-                <input 
-                  type="file" 
-                  accept=".json"
-                  className="w-full text-xs text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-orange-50 file:text-orange-800 hover:file:bg-orange-100 cursor-pointer"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = (ev) => {
-                        try {
-                          const json = JSON.parse(ev.target?.result as string);
-                          setDictionary(json);
-                          alert("Đã đồng bộ!");
-                        } catch (err) { alert("File không hợp lệ."); }
-                      };
-                      reader.readAsText(file);
-                    }
-                  }}
-                />
-              </div>
             </div>
+          )}
+        </main>
 
-            <div className="bg-red-50 p-8 rounded-3xl border-2 border-red-100 text-center">
-              <h3 className="font-black text-red-800 uppercase text-xs mb-2">Xóa toàn bộ & Khôi phục gốc</h3>
-              <p className="text-[10px] text-red-600/70 mb-6 font-bold uppercase tracking-wider">Mọi thay đổi cá nhân sẽ bị mất vĩnh viễn.</p>
-              <button 
-                onClick={() => { if (confirm("Xác nhận khôi phục cài đặt gốc?")) setDictionary(DEFAULT_DICTIONARY); }}
-                className="bg-red-600 text-white px-10 py-4 rounded-2xl font-black hover:bg-red-700 shadow-lg active:scale-95 transition-all text-[10px] uppercase"
-              >
-                Reset Toàn Bộ
-              </button>
+        {/* Floating Bottom Footer */}
+        <footer className="fixed bottom-6 left-6 right-6 md:bottom-8 md:left-1/2 md:-translate-x-1/2 md:max-w-3xl bg-white/70 backdrop-blur-2xl border border-white/30 p-4 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] z-50">
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between px-2">
+            <p className="text-[9px] md:text-[10px] text-gray-400 font-black uppercase tracking-tighter">© 2025 Jrai Dictionary - Version 1.6</p>
+            <div className="flex gap-2 w-full sm:w-auto">
+              <a href="https://discord.gg/TpjGV3EHt" target="_blank" rel="noopener noreferrer" className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-[#5865F2] text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:scale-105 transition-transform"><DiscordIcon /> Discord</a>
+              <a href="https://discord.gg/2qK6P5FW" target="_blank" rel="noopener noreferrer" className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-gray-900 text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:scale-105 transition-transform"><DiscordIcon /> Admin</a>
             </div>
           </div>
-        )}
-      </main>
-
-      {/* Modern Floating Footer */}
-      <footer className="fixed bottom-4 left-4 right-4 md:bottom-6 md:left-1/2 md:-translate-x-1/2 md:max-w-4xl bg-white/80 backdrop-blur-xl border border-white/20 p-4 rounded-2xl md:rounded-[2rem] shadow-2xl z-50">
-        <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-          <p className="text-[9px] text-gray-400 font-black uppercase tracking-tighter">© 2025 Jrai Dictionary - Di sản Tây Nguyên</p>
-          <div className="flex gap-2 w-full sm:w-auto">
-            <a href="https://discord.gg/TpjGV3EHt" target="_blank" rel="noopener noreferrer" className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-[#5865F2] text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:scale-105 active:scale-95 transition-transform"><DiscordIcon /> Discord</a>
-            <a href="https://discord.gg/2qK6P5FW" target="_blank" rel="noopener noreferrer" className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-gray-900 text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:scale-105 active:scale-95 transition-transform"><DiscordIcon /> Admin</a>
-          </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
   );
 };
