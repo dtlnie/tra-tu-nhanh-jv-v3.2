@@ -1,0 +1,7 @@
+{
+  "name": "Tra Từ Nhanh Jrai-Việt",
+  "description": "Ứng dụng tra cứu và học từ vựng tiếng Jrai chuyên nghiệp với giao diện hiện đại.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
