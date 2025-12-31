@@ -1,33 +1,31 @@
-
 import { GoogleGenAI, Modality } from "@google/genai";
 
-// khởi tạo gemini client - @google/genai guideline: must use new GoogleGenAI({ apiKey: process.env.API_KEY })
-const getAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Khởi tạo SDK chuẩn: Phải dùng named parameter { apiKey: process.env.API_KEY }
+// Không định nghĩa model trước, gọi trực tiếp qua ai.models
+const getAiClient = () => {
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+};
 
-// hàm giải thích từ vựng dùng ai
 export const explainWord = async (jraiWord: string, vietMeaning: string) => {
   try {
-    const ai = getAi();
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Giải thích chi tiết hơn về từ tiếng Jrai "${jraiWord}" (nghĩa là "${vietMeaning}"). Hãy cho biết ngữ cảnh sử dụng và ví dụ một câu đơn giản. Trả lời bằng tiếng Việt.`,
+      contents: `Giải thích chi tiết hơn về từ tiếng Jrai "${jraiWord}" (nghĩa là "${vietMeaning}"). Hãy cho biết ngữ cảnh sử dụng và ví dụ một câu đơn giản. Trả lời bằng tiếng Việt gọn gàng.`,
     });
-    // @google/genai guideline: use .text property
-    return response.text;
+    return response.text || "Không có giải thích nào từ AI.";
   } catch (error) {
-    console.error("Lỗi khi gọi Gemini:", error);
-    return "Không thể lấy giải thích từ AI vào lúc này.";
+    console.error("Lỗi Gemini:", error);
+    return "Không thể kết nối với trí tuệ nhân tạo lúc này.";
   }
 };
 
-// hàm phát âm dùng gemini tts
 export const getSpeech = async (text: string, isVietnamese: boolean = false): Promise<string | null> => {
   try {
-    const ai = getAi();
-    // prompt cụ thể hơn để tránh model hiểu nhầm ngôn ngữ
+    const ai = getAiClient();
     const prompt = isVietnamese 
-      ? `Hãy phát âm chuẩn xác từng chữ tiếng Việt sau đây một cách rõ ràng: "${text}"` 
-      : `Hãy phát âm rõ ràng từ vựng tiếng dân tộc Jrai sau đây: "${text}"`;
+      ? `Phát âm tiếng Việt rõ ràng: "${text}"` 
+      : `Phát âm tiếng Jrai rõ ràng: "${text}"`;
       
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
@@ -36,18 +34,17 @@ export const getSpeech = async (text: string, isVietnamese: boolean = false): Pr
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            // sử dụng Puck cho tiếng việt/á đông để có giọng tự nhiên hơn
             prebuiltVoiceConfig: { voiceName: isVietnamese ? 'Puck' : 'Kore' },
           },
         },
       },
     });
 
+    // Lấy data audio từ inlineData
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    // Return raw base64 string for PCM decoding as per guidelines
     return base64Audio || null;
   } catch (error) {
-    console.error("Lỗi khi tạo âm thanh:", error);
+    console.error("Lỗi TTS:", error);
     return null;
   }
 };
